@@ -1,0 +1,99 @@
+---
+title: "PML Course Project"
+author: "Patrick J. Gillen"
+date: "Monday, September 1, 2014"
+output:
+  html_document:
+    fig_caption: yes
+    number_sections: yes
+---
+
+```{r, echo=FALSE}
+library(caret, quietly=TRUE)
+library(randomForest, quietly=TRUE)
+```
+
+# Features Selection
+
+In this study six participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+```{r, echo=FALSE}
+training <- read.csv("pml-training.csv")
+with(training, table(user_name, classe))
+```
+
+The data comprise three Euler angles and nine raw accelerator, gyroscope, magnetometer readings from sensors mounted on each participant's glove ("forearm"), armband ("arm"), lumbar belt ("belt"), and dumbbell. For example, the sensors placed on the participant's glove generated 12 measurements: 
+
+```{r, echo=FALSE}
+grep("^[a-z]+_forearm(_[xyz])*", names(training), value=T)
+```
+
+Eight additional features were calculated for the Euler angles but as these features are not present in the test data we remove them from the training data.
+
+```{r, results='hide'}
+training <- training[, -grep("(kurtosis|skewness|max|min|amplitude|avg|var|stddev)", names(training))]
+```
+
+Finally, we remove a handful of variables that are unlikely to have any predictive power in the model or variables that have near zero variances.
+
+```{r, results='hide'}
+training <- training[, -(1:7)]
+training <- training[, !nearZeroVar(training, saveMetrics=TRUE)$nzv]
+```
+
+Afterwards, just ```r dim(training)[2]``` variables remain, including the *classe* variable which we are trying to predict.
+
+# Model Training
+
+We train a random forest to the data using the default settings, which tune the model to maximize its accuracy.
+
+```{r, cache=TRUE}
+modFit <- train(classe ~., data=training, method="rf")
+save("modFit", file="modFit.rdb")
+```
+
+# Model Diagnostics
+
+The final model achieves an accuracy of 0.9959. The model's out-of-sample error is estimated by performing 25 (bootstrap) resampling iterations (using the default settings). The 95% confidence interval for the model's accuracy is (0.9949, 0.9967).
+
+```{r, echo=FALSE}
+confusionMatrix(modFit$finalModel$y, modFit$finalModel$predicted)
+```
+
+The accuracy achieved by the model is suspiciously high (suggesting perhaps overfitting) so as another check we go back to the original training data and divide them into a smaller training set and a validation set.
+
+```{r}
+inTrain <- createDataPartition(training$classe, p=0.7, list=FALSE)
+training2 <- training[inTrain,]
+validation <- training[-inTrain,]
+```
+
+Then we retrain a random forest to the smaller training set, again using the default settings except without only 1 resampling (to shorten the calculation time).
+
+```{r, cache=TRUE}
+modFit2 <- train(classe ~., data=training2, method="rf", trControl=trainControl(number=1))
+save("modFit2", file="modFit2.rdb")
+```
+
+Finally we test the model trained on the smaller training set on the validation set.
+
+```{r}
+validation$pred <- predict(modFit2$finalModel, newdata=validation)
+confusionMatrix(validation$classe, validation$pred)
+```
+
+Happily the model's accuracy remains above 0.99.
+
+# Predicting New Values
+
+We can predict the *classe* variable for the test data using the following code chunk:
+
+```{r}
+testing <- read.csv("pml-testing.csv")
+predictions <- predict(modFit, newdata=testing)
+write.csv(predictions, "pml-predictions.csv")
+```
+
+# References
+
+Velloso, E., et al. Qualitative Activity Recognition of Weight Lifting Exercises. Available at http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201
